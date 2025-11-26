@@ -2,34 +2,59 @@ import os
 from dotenv import load_dotenv
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
 from langchain.vectorstores import FAISS
-from langchain.chat_models import ChatOpenAI
-from langchain.chains.question_answering import load_qa_chain
+from langchain.chains import RetrievalQA
 import streamlit as st
 
+# Load environment variables
 load_dotenv()
 openai_api_key = os.getenv("OPENAI_API_KEY")
 
-st.title("📄 PDF Chatbot with LangChain (RAG)")
+st.title("PDF Chatbot with LangChain (RAG)")
 
+# Upload PDF
 pdf = st.file_uploader("Upload your PDF", type="pdf")
+
 if pdf:
+    # Read PDF
     reader = PdfReader(pdf)
     text = ""
     for page in reader.pages:
-        text += page.extract_text()
+        content = page.extract_text()
+        if content:
+            text += content
 
-    splitter = CharacterTextSplitter(separator="\n", chunk_size=1000, chunk_overlap=200)
+    # Split into chunks
+    splitter = CharacterTextSplitter(
+        separator="\n",
+        chunk_size=1000,
+        chunk_overlap=200
+    )
     chunks = splitter.split_text(text)
 
-    embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+    # Create embeddings
+    embeddings = OpenAIEmbeddings(api_key=openai_api_key)
+
+    # Store vectors in FAISS
     vectorstore = FAISS.from_texts(chunks, embedding=embeddings)
 
+    # Create retriever
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+    # LLM
+    llm = ChatOpenAI(model="gpt-4o-mini", api_key=openai_api_key)
+
+    # Final QA system (RAG)
+    qa = RetrievalQA.from_chain_type(
+        llm=llm,
+        chain_type="stuff",
+        retriever=retriever
+    )
+
+    # User query
     query = st.text_input("Ask a question about the PDF:")
+
     if query:
-        docs = vectorstore.similarity_search(query, k=3)
-        llm = ChatOpenAI(openai_api_key=openai_api_key)
-        chain = load_qa_chain(llm, chain_type="stuff")
-        response = chain.run(input_documents=docs, question=query)
-        st.write(response)
+        answer = qa.run(query)
+        st.write(answer)
